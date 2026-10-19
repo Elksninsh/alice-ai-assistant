@@ -50,7 +50,7 @@ function fitAliceText(value) {
 }
 
 function isSearchIntent(text) {
-  return /\b(latest|today|current|news|weather|price|exchange rate|recent|search|look up)\b|сегодня|сейчас|последн|новост|погод|курс валют|найди|поищи|актуальн|сколько стоит|свежие данные/i.test(text);
+  return /\b(latest|today|current|news|weather|price|exchange rate|recent|search|look up|find out|check online|look online|on the web|official website|who won)\b|сегодня|сейчас|последн|новост|погод|курс валют|найди|поищи|проверь|узнай|посмотри в интернете|поищи в сети|актуальн|сколько стоит|свежие данные|в интернете|на сайте|официальн|кто победил|кто выиграл|результат матч|где купить|цена|стоимость/i.test(text);
 }
 
 function safeHistory(history) {
