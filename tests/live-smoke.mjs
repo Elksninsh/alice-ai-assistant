@@ -18,6 +18,7 @@ async function request(command, session = {}) {
   console.log("State:",JSON.stringify({history:data?.session_state?.history?.length,sources:data?.session_state?.lastSearch?.sources?.length,pending:!!data?.session_state?.pendingSearch}));
   assert.equal(response.status,200);
   assert.equal(data.version,"1.0");
+  assert.ok(Buffer.byteLength(JSON.stringify(data.session_state || {}),"utf8") <= 1024,"Alice session_state exceeds 1 KB");
   assert.ok(text.length>0);
   assert.ok(responseLanguageMatches(command==="продолжай"?"Найди цену бензина":command,text),"Wrong language in Alice response");
   assert.doesNotMatch(text,/16[.,]25\s*(?:gel|лари)/i,"Hallucinated 16.25 GEL fuel price");
