@@ -101,6 +101,58 @@ async function searchWeb(query, timeoutMs) {
   }
 }
 
+function globalNewsIntent(text) {
+  return /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(text);
+}
+
+function newsDateRecent(value, now = Date.now()) {
+  const s = String(value || "").trim().toLowerCase();
+  if (!s) return false;
+  if (/just now|minute|hour|минут|час|вчера|yesterday|today|сегодня/.test(s)) return true;
+  const d = s.match(/(\d+)\s*(day|дн)/);
+  if (d) return Number(d[1]) <= 1;
+  if (/week|month|year|недел|месяц|год/.test(s)) return false;
+  const parsed = Date.parse(s);
+  return Number.isFinite(parsed) && parsed <= now + 3600000 && now - parsed <= 48 * 3600000;
+}
+
+async function searchVerifiedNews(timeoutMs) {
+  const key = process.env.SERPER_API_KEY;
+  if (!key) return {items:[],status:"нет ключа Serper"};
+  if (timeoutMs < 250) return {items:[],status:"недостаточно времени"};
+  try {
+    const {response,data} = await fetchJson("https://google.serper.dev/news", {
+      method:"POST",
+      headers:{"X-API-KEY":key,"Content-Type":"application/json"},
+      body:JSON.stringify({q:"world international breaking news politics economy",gl:"us",hl:"en",num:15})
+    },Math.min(SERPER_TIMEOUT_MS,timeoutMs));
+    if (!response.ok) return {items:[],status:"Serper HTTP " + response.status};
+    const candidates = Array.isArray(data.news) ? data.news : [];
+    const approved = /(?:^|\.)(reuters\.com|apnews\.com|bbc\.com|bbc\.co\.uk|theguardian\.com|aljazeera\.com|dw\.com|france24\.com|npr\.org|politico\.com|cnn\.com|bloomberg\.com|ft\.com|nytimes\.com|washingtonpost\.com|abcnews\.go\.com)$/i;
+    const items = [];
+    const seen = new Set();
+    for (const item of candidates) {
+      const title = String(item.title || "").trim();
+      const link = String(item.link || "");
+      const source = String(item.source || "");
+      const date = String(item.date || "");
+      let hostname = "";
+      try { hostname = new URL(link).hostname.replace(/^www\./,""); } catch {}
+      if (!approved.test(hostname) || !newsDateRecent(date)) continue;
+      if (/sports?|football|soccer|basketball|tennis|cricket|cycling|hockey|video|highlights/i.test(title)) continue;
+      const id = title.toLowerCase().replace(/[^a-z0-9а-яё]+/gi," ").slice(0,65);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      items.push({title:title.slice(0,170),snippet:String(item.snippet || "").slice(0,230),source:source || hostname,date});
+      if (items.length >= 5) break;
+    }
+    console.info("Serper news count", candidates.length, "trusted and recent", items.length);
+    return {items,status:items.length ? "ok" : "не найдено достаточно свежих материалов от проверяемых источников"};
+  } catch(error) {
+    return {items:[],status:error?.name==="AbortError" ? "время поиска истекло" : "ошибка соединения"};
+  }
+}
+
 async function askOpenAI(text, history, searchContext, timeoutMs) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("MISSING_OPENAI_KEY");
@@ -200,18 +252,19 @@ export default async function handler(req, res) {
   try {
     let searchContext = "";
     let searchStatus = "поиск не запускался";
-    const globalNewsRequest = /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(text);
-    if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      const reserved = globalNewsRequest ? 1700 : 2750;
-      const search = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - reserved)));
+    const globalNewsRequest = globalNewsIntent(text);
+    if (globalNewsRequest) {
+      const news = await searchVerifiedNews(Math.max(0, remainingMs() - 1700));
+      if (!news.items.length) {
+        const answer = "Не могу достоверно назвать главные новости за сегодня: " + news.status + ".";
+        const history = [...oldHistory,{role:"user",text:text.slice(0,MAX_HISTORY_MESSAGE_CHARS)},{role:"model",text:answer}].slice(-MAX_HISTORY_MESSAGES);
+        return res.status(200).json(aliceResponse(answer,false,history));
+      }
+      searchContext = news.items.map((item,i)=>`${i+1}. ${item.source} [${item.date}]: ${item.title}. ${item.snippet}`).join("\n");
+    } else if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
+      const search = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0,remainingMs() - 2750)));
       searchContext = search.text;
       searchStatus = search.status;
-    }
-
-    if (globalNewsRequest && !searchContext) {
-      const answer="Не удалось получить свежие данные из поиска: "+searchStatus+".";
-      const history=[...oldHistory,{role:"user",text:text.slice(0,MAX_HISTORY_MESSAGE_CHARS)},{role:"model",text:answer}].slice(-MAX_HISTORY_MESSAGES);
-      return res.status(200).json(aliceResponse(answer,false,history));
     }
     let answer;
     try {
@@ -224,6 +277,9 @@ export default async function handler(req, res) {
     } catch (modelError) {
       console.warn("OpenAI synthesis failed after search", modelError?.message || modelError?.name || "unknown");
       if (!searchContext) throw modelError;
+      if (globalNewsRequest) {
+        answer = "Нашла свежие материалы, но не успела подготовить пересказ. Заголовки источников: " + searchContext.split("\n").slice(0,3).map(line => line.replace(/^\d+\. /,"").split(": ").slice(0,2).join(": ").slice(0,170)).join("; ") + ".";
+      } else {
       const headlines = searchContext.split("\n")
         .filter(line => /^\d+\.\s/.test(line))
         .slice(0, 3)
@@ -237,6 +293,7 @@ export default async function handler(req, res) {
       answer = headlines.length
         ? "Не успела обработать найденное нейросетью. Вот заголовки и выдержки из поиска, их актуальность не подтверждена: " + headlines.join(". ")
         : "Поиск ответил, но обработать результаты не удалось. Попробуй позже.";
+      }
     }
 
     const history = [
