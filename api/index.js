@@ -3,7 +3,7 @@ const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 4200;
-const SERPER_TIMEOUT_MS = 2900;
+const SERPER_TIMEOUT_MS = 2450;
 const OPENAI_TIMEOUT_MS = 2700;
 
 const SYSTEM_PROMPT = [
@@ -81,7 +81,7 @@ async function searchWeb(query, timeoutMs) {
     const {response,data}=await fetchJson("https://google.serper.dev/search",{
       method:"POST",
       headers:{"X-API-KEY":key,"Content-Type":"application/json"},
-      body:JSON.stringify({q:query,gl:"ru",hl:"ru",num:5})
+      body:JSON.stringify({q:/главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query) ? "главные события в мире 19 октября 2026 международные новости -спорт -видео" : query,gl:"ru",hl:"ru",num:6})
     },Math.min(SERPER_TIMEOUT_MS,timeoutMs));
     if (!response.ok) return {text:"",status:"HTTP "+response.status};
     const results=Array.isArray(data.organic)?data.organic:[];
@@ -202,7 +202,7 @@ export default async function handler(req, res) {
     let searchStatus = "поиск не запускался";
     const globalNewsRequest = /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(text);
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      const reserved = globalNewsRequest ? 1050 : 2750;
+      const reserved = globalNewsRequest ? 1700 : 2750;
       const search = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - reserved)));
       searchContext = search.text;
       searchStatus = search.status;
@@ -222,9 +222,21 @@ export default async function handler(req, res) {
       Math.max(0, Math.min(OPENAI_TIMEOUT_MS, remainingMs() - 200))
       );
     } catch (modelError) {
-      if (!searchContext || !/TIME_BUDGET_EXHAUSTED|AbortError/.test(String(modelError?.message || modelError?.name))) throw modelError;
-      const titles = searchContext.split("\n").slice(0, 3).map(line => line.replace(/^\d+\. /, "").split(": ")[0].replace(/\s*\([^)]*\)$/, "").trim());
-      answer = "Не успела подробно обработать результаты поиска. Вот найденные заголовки, без проверки содержания: " + titles.join("; ") + ".";
+      console.warn("OpenAI synthesis failed after search", modelError?.message || modelError?.name || "unknown");
+      if (!searchContext) throw modelError;
+      const headlines = searchContext.split("\n")
+        .filter(line => /^\d+\.\s/.test(line))
+        .slice(0, 3)
+        .map(line => {
+          const raw = line.replace(/^\d+\.\s*/, "").replace(/https?:\/\/\S+/g, "").trim();
+          const sep = raw.indexOf(": ");
+          const headline = sep >= 0 ? raw.slice(0, sep) : raw;
+          const detail = sep >= 0 ? raw.slice(sep + 2) : "";
+          return headline.slice(0, 135) + (detail ? ". " + detail.slice(0, 120) : "");
+        });
+      answer = headlines.length
+        ? "Не успела обработать найденное нейросетью. Вот заголовки и выдержки из поиска, их актуальность не подтверждена: " + headlines.join(". ")
+        : "Поиск ответил, но обработать результаты не удалось. Попробуй позже.";
     }
 
     const history = [
