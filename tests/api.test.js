@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup } from "../api/index.js";
+import { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup, responseLanguageMatches } from "../api/index.js";
 
 test("Alice response uses required response envelope", () => {
   const result = aliceResponse("Привет", false, [{ role: "user", text: "тест" }]);
@@ -106,4 +106,16 @@ test("numeric substrings and currency-free snippets cannot validate prices", () 
   const search = { sources: [{link:"https://example.ge",snippet:"Показатель 316,25 и 16,25 километра"}] };
   assert.equal(numericPriceIsGrounded("16,25 лари", search), false);
   assert.equal(numericPriceIsGrounded("16,25 лари", {sources:[]}), false);
+});
+
+test("reject an English-dominant answer for a Russian question", () => {
+  assert.equal(responseLanguageMatches("Сколько стоит бензин в Грузии?", "The gasoline price is sixteen lari and I think that might be current."),false);
+  assert.equal(responseLanguageMatches("Сколько стоит бензин в Грузии?", "По информации найденного сайта, цена составляет около четырёх лари."),true);
+  assert.equal(responseLanguageMatches("What is the fuel price in Georgia?", "I couldn't confirm the latest price."),true);
+});
+
+test("recognize GEL amount before and after the number", () => {
+  const source={sources:[{link:"https://gulf.ge/prices",title:"Premium 95 in Georgia",snippet:"Premium 95: ₾ 3.95 per litre"}],query:"Сколько стоит бензин АИ-95 в Грузии?"};
+  assert.equal(numericPriceIsGrounded("Цена 3,95 лари за литр",source),true);
+  assert.equal(numericPriceIsGrounded("Цена 16,25 лари за литр",source),false);
 });
