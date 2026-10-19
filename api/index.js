@@ -18,14 +18,14 @@ const SYSTEM_PROMPT = [
   "Не заявляй, что управляешь устройствами, устанавливаешь напоминания или выполняешь действия, если такой функции у тебя нет."
 ].join(" ");
 
-function aliceResponse(text, endSession = false, history = []) {
+function aliceResponse(text, endSession = false, history = [], lastSearch = null) {
   return {
     version: "1.0",
     response: {
       text: fitAliceText(text),
       end_session: endSession
     },
-    session_state: { history }
+    session_state: { history, ...(lastSearch ? {lastSearch} : {}) }
   };
 }
 
@@ -50,7 +50,7 @@ function fitAliceText(value) {
 }
 
 function isSearchIntent(text) {
-  return /\b(latest|today|current|news|weather|price|exchange rate|recent|search|look up|find out|check online|look online|on the web|official website|who won)\b|сегодня|сейчас|последн|новост|погод|курс валют|найди|поищи|проверь|узнай|посмотри в интернете|поищи в сети|актуальн|сколько стоит|свежие данные|в интернете|на сайте|официальн|кто победил|кто выиграл|результат матч|где купить|цена|стоимость/i.test(text);
+  return /\b(latest|today|current|news|weather|price|exchange rate|recent|search|look up|find out|check online|look online|on the web|official website|who won)\b|сегодня|сейчас|последн|новост|погод|курс валют|найди|поищи|проверь|узнай|посмотри в интернете|поищи в сети|актуальн|сколько стоит|свежие данные|в интернете|на сайте|официальн|кто победил|кто выиграл|результат матч|где купить|цена|стоимость|источник|откуда информация|ссылк/i.test(text);
 }
 
 function safeHistory(history) {
@@ -88,10 +88,32 @@ function fallbackMessage(text, reason = "timeout") {
     : "Я нашла данные в интернете, но не успела подготовить точный ответ на русском. Повтори вопрос чуть позже.";
 }
 
+function isSourceFollowup(text) {
+  return /источник|откуда (ты )?(взял|взяла|информац)|пришли.*ссылк|дай.*ссылк|source|citation|where did you get/i.test(text);
+}
+
+function looksLikePriceQuestion(text) {
+  return /бензин|топлив|за литр|сколько стоит|цена|стоимость|price|cost per liter|gasoline/i.test(text);
+}
+
+function numericPriceIsGrounded(answer, context) {
+  const values = [...String(answer).matchAll(/\b(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:лари|gel|₾|руб|usd|доллар|\$|евро|eur)\b/gi)];
+  if (!values.length) return true;
+  const normalized = String(context).replace(/,/g,".");
+  return values.every(match => normalized.includes(match[1].replace(/,/g,".")));
+}
+
+function savedSearchSources(search) {
+  return (search?.sources || []).slice(0,3).map((item,i) => {
+    const date = item.date ? " (" + item.date + ")" : "";
+    return (i+1) + ". " + item.title + date + ": " + item.link;
+  }).join("\n");
+}
+
 async function searchWeb(query, timeoutMs) {
   const key = process.env.SERPER_API_KEY;
-  if (!key) return {text:"",status:"key_missing"};
-  if (timeoutMs < 150) return {text:"",status:"no_time"};
+  if (!key) return {text:"",status:"key_missing",sources:[]};
+  if (timeoutMs < 150) return {text:"",status:"no_time",sources:[]};
   const language = userLanguage(query);
   const latest = /сегодня|сейчас|последн|новост|актуальн|свеж|today|latest|breaking|news/i.test(query);
   const globalNews = /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query);
@@ -104,11 +126,12 @@ async function searchWeb(query, timeoutMs) {
       headers:{"X-API-KEY":key,"Content-Type":"application/json"},
       body:JSON.stringify({q:actualQuery,gl:language==="ru"?"ru":"us",hl:language,num:6,...(latest?{tbs:"qdr:w"}:{})})
     },Math.min(SERPER_TIMEOUT_MS,timeoutMs));
-    if (!response.ok) return {text:"",status:"http_"+response.status};
+    if (!response.ok) return {text:"",status:"http_"+response.status,sources:[]};
     const results = Array.isArray(data.organic) ? data.organic : [];
     const selected = globalNews
       ? results.filter(x => !/youtube|rutube|dzen\.ru\/video/i.test(String(x.link||"")) && !/видео|выпуск|спорт|футбол|football|sports/i.test(String(x.title||"")))
       : results;
+    const sourceItems = selected.slice(0,4).map(item => ({title:String(item.title||"").slice(0,150),link:String(item.link||"").slice(0,250),date:String(item.date||"").slice(0,45)}));
     const items = selected.slice(0,4).map((item,i) => {
       const title=String(item.title||"").slice(0,170);
       const snippet=String(item.snippet||"").slice(0,250);
@@ -117,9 +140,9 @@ async function searchWeb(query, timeoutMs) {
       return `${i+1}. ${title} [${date}]: ${snippet} ${source}`;
     });
     if (data.answerBox?.answer && !globalNews) items.unshift("Search answer: "+String(data.answerBox.answer).slice(0,250));
-    return {text:items.join("\n"),status:items.length?"ok":"empty"};
+    return {text:items.join("\n"),status:items.length?"ok":"empty",sources:sourceItems};
   } catch (error) {
-    return {text:"",status:error?.name==="AbortError"?"timeout":"connection"};
+    return {text:"",status:error?.name==="AbortError"?"timeout":"connection",sources:[]};
   }
 }
 
@@ -210,6 +233,7 @@ export default async function handler(req, res) {
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
   const oldHistory = safeHistory(body?.state?.session?.history);
+  const oldSearch = body?.state?.session?.lastSearch || null;
 
   if (!text) {
     return res.status(200).json(aliceResponse(
@@ -221,25 +245,43 @@ export default async function handler(req, res) {
 
   try {
     let searchContext = "";
-    const wantsSearch = isSearchIntent(text);
-    if (wantsSearch) {
-      const search = await searchWeb(text, Math.max(0,remainingMs()-2750));
-      searchContext = search.text;
-      console.info("Search status:", search.status);
-    }
+    let searchRecord = oldSearch;
     let answer;
-    if (wantsSearch && !searchContext) {
-      answer = fallbackMessage(text,"search");
+    if (isSourceFollowup(text)) {
+      if (oldSearch?.sources?.length) {
+        answer = (userLanguage(text)==="en" ? "Sources from my last web search: " : "Источники из моего предыдущего интернет-поиска: ") + savedSearchSources(oldSearch);
+      } else {
+        answer = userLanguage(text)==="en"
+          ? "I don't have a confirmed source from the previous answer, so I can't substantiate it."
+          : "У меня нет сохранённого источника предыдущего ответа, поэтому я не могу подтвердить его достоверность.";
+      }
     } else {
-      try {
-        answer = await askOpenAI(
-          text, oldHistory, searchContext,
-          Math.max(0,Math.min(OPENAI_TIMEOUT_MS,remainingMs()-180))
-        );
-      } catch(error) {
-        if (!searchContext) throw error;
-        console.warn("Search summarization error:",error?.message || error?.name || "unknown");
-        answer = fallbackMessage(text,"timeout");
+      const wantsSearch = isSearchIntent(text);
+      if (wantsSearch) {
+        const search = await searchWeb(text, Math.max(0,remainingMs()-2750));
+        searchContext = search.text;
+        searchRecord = search.sources?.length ? {query:text,sources:search.sources} : null;
+        console.info("Search status:",search.status,"sources:",search.sources?.length || 0);
+      }
+      if (wantsSearch && !searchContext) {
+        answer = fallbackMessage(text,"search");
+      } else {
+        try {
+          answer = await askOpenAI(
+            text, oldHistory, searchContext,
+            Math.max(0,Math.min(OPENAI_TIMEOUT_MS,remainingMs()-180))
+          );
+          if (wantsSearch && looksLikePriceQuestion(text) && !numericPriceIsGrounded(answer,searchContext)) {
+            console.warn("Ungrounded price blocked");
+            answer = userLanguage(text)==="en"
+              ? "I found search results, but couldn't verify a reliable price from them. I won't guess."
+              : "В поиске не удалось подтвердить точную цену. Не буду называть неподтверждённую сумму.";
+          }
+        } catch(error) {
+          if (!searchContext) throw error;
+          console.warn("Search summarization error:",error?.message || error?.name || "unknown");
+          answer = fallbackMessage(text,"timeout");
+        }
       }
     }
 
@@ -249,7 +291,7 @@ export default async function handler(req, res) {
       { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }
     ].slice(-MAX_HISTORY_MESSAGES);
 
-    return res.status(200).json(aliceResponse(answer, false, history));
+    return res.status(200).json(aliceResponse(answer, false, history, searchRecord));
   } catch (error) {
     const safeError = error?.name === "AbortError" ? new Error("TIME_BUDGET_EXHAUSTED") : error;
     console.warn("Alice webhook returned a fallback response:", safeError?.message || "unknown error");
