@@ -3,7 +3,6 @@ const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 3600;
-const SEARCH_TIMEOUT_MS = 750;
 const SERPER_TIMEOUT_MS = 650;
 const OPENAI_TIMEOUT_MS = 3200;
 
@@ -71,28 +70,6 @@ async function fetchJson(url, options, timeoutMs) {
     return { response, data };
   } finally {
     clearTimeout(timer);
-  }
-}
-
-async function searchBrave(query, timeoutMs) {
-  const key = process.env.BRAVE_SEARCH_API_KEY;
-  if (!key || timeoutMs < 150) return "";
-  try {
-    const url = "https://api.search.brave.com/res/v1/web/search?" +
-      new URLSearchParams({ q: query, count: "3", search_lang: "ru" }).toString();
-    const { response, data } = await fetchJson(url, {
-      headers: { "Accept": "application/json", "X-Subscription-Token": key }
-    }, timeoutMs);
-    if (!response.ok) {
-      console.warn("Brave Search HTTP", response.status);
-      return "";
-    }
-    return (Array.isArray(data.web?.results) ? data.web.results : []).slice(0, 3)
-      .map((item, i) => `${i + 1}. ${String(item.title || "").slice(0, 160)}: ${String(item.description || "").slice(0, 330)} ${String(item.url || "").slice(0, 220)}`)
-      .join("\\n");
-  } catch {
-    console.warn("Brave Search unavailable within time budget");
-    return "";
   }
 }
 
@@ -235,14 +212,8 @@ export default async function handler(req, res) {
 
   try {
     let searchContext = "";
-    if (isSearchIntent(text)) {
-      const searchBudget = Math.min(SEARCH_TIMEOUT_MS, Math.max(0, remainingMs() - 2700));
-      if (process.env.BRAVE_SEARCH_API_KEY) {
-        searchContext = await searchBrave(text, searchBudget);
-      }
-      if (!searchContext && process.env.SERPER_API_KEY) {
-        searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2700)));
-      }
+    if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
+      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2700)));
     }
 
     const answer = await askOpenAI(
