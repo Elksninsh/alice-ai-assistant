@@ -2,9 +2,9 @@ const DEFAULT_MODEL = "gpt-4.1-mini";
 const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
-const TOTAL_RESPONSE_BUDGET_MS = 3600;
-const SERPER_TIMEOUT_MS = 450;
-const OPENAI_TIMEOUT_MS = 3100;
+const TOTAL_RESPONSE_BUDGET_MS = 4200;
+const SERPER_TIMEOUT_MS = 1050;
+const OPENAI_TIMEOUT_MS = 2850;
 
 const SYSTEM_PROMPT = [
   "Ты — Смарт Скилл, интеллектуальный голосовой собеседник. Общайся естественно, тепло, уважительно и на русском языке, на «ты».",
@@ -79,14 +79,14 @@ async function searchWeb(query, timeoutMs) {
 
   try {
     const { response, data } = await fetchJson(
-      "https://google.serper.dev/search",
+      /новост|news|событи/i.test(query) ? "https://google.serper.dev/news" : "https://google.serper.dev/search",
       {
         method: "POST",
         headers: {
           "X-API-KEY": key,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: 3 })
+        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: 4 })
       },
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
@@ -96,20 +96,23 @@ async function searchWeb(query, timeoutMs) {
       return "";
     }
 
-    const items = (Array.isArray(data.organic) ? data.organic : [])
+    const results = Array.isArray(data.news) ? data.news : (Array.isArray(data.organic) ? data.organic : []);
+    const items = results
       .slice(0, 3)
       .map((item, i) => {
         const title = String(item.title || "").slice(0, 180);
         const snippet = String(item.snippet || "").slice(0, 350);
         const link = String(item.link || "").slice(0, 240);
-        return `${i + 1}. ${title}: ${snippet} ${link}`.trim();
+        const published = String(item.date || "").slice(0, 50);
+        return `${i + 1}. ${title} (${published}): ${snippet} ${link}`.trim();
       });
 
     const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
     if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
+    console.info("Search results count:", items.length);
     return items.length ? items.join("\n") : "";
   } catch (error) {
-    console.warn("Serper request did not finish in time; continuing without search.");
+    console.warn("Serper search unavailable:", error?.name || "error");
     return "";
   }
 }
@@ -213,7 +216,7 @@ export default async function handler(req, res) {
   try {
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 3200)));
+      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2950)));
     }
 
     const answer = await askOpenAI(
