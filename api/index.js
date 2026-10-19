@@ -131,6 +131,14 @@ function savedSearchSources(search) {
   }).join("\n");
 }
 
+function responseLanguageMatches(question,answer) {
+  const plain = String(answer).replace(/https?:\/\/\S+/g," ").replace(/\b\S+\.(?:ge|com|org|net|ru|io)\b/gi," ");
+  const latin = (plain.match(/[a-z]/gi) || []).length;
+  const cyrillic = (plain.match(/[а-яё]/gi) || []).length;
+  if (userLanguage(question)==="ru") return !(latin > cyrillic * 1.25 && latin > 35);
+  return !(cyrillic > latin * 1.25 && cyrillic > 35);
+}
+
 function isSearchContinuation(text) {
   return /^(продолж(ай|и|ить)|что нашла|что удалось найти|расскажи|дай ответ|ответь|подробнее|continue|tell me|go on|what did you find)[\s?!.,]*$/i.test(String(text).trim());
 }
@@ -277,6 +285,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       service: "alice-openai-serper",
+      version: "two-stage-search-1",
       message: "Webhook is ready. Yandex Dialogs should send POST requests to /api."
     });
   }
@@ -352,7 +361,12 @@ export default async function handler(req, res) {
         } else {
           try {
             answer = await askOpenAI(question,oldHistory,searchContext,Math.max(0,Math.min(OPENAI_TIMEOUT_MS,remainingMs()-200)));
-            if (wantsSearch && looksLikePriceQuestion(question)) {
+            if (!responseLanguageMatches(question,answer)) {
+              console.warn("Wrong-language response rejected");
+              answer = searchPendingMessage(question);
+              pendingSearch = wantsSearch ? {query:question} : null;
+              supported = false;
+            } else if (wantsSearch && looksLikePriceQuestion(question)) {
               supported = reliablePriceSources({sources:searchRecord?.sources}).length > 0
                 && numericPriceIsGrounded(answer,{sources:searchRecord?.sources,query:question});
               if (!supported) {
@@ -360,7 +374,7 @@ export default async function handler(req, res) {
                   ? "The search results do not reliably confirm a current price. I won't invent one. You can ask for the source links."
                   : "Найденные страницы не позволяют достоверно подтвердить актуальную цену. Не буду придумывать цифру. Могу показать источники.";
               }
-            } else if (wantsSearch) {
+            } else if (wantsSearch && !pendingSearch) {
               supported = true;
             }
             if (wantsSearch && supported && searchRecord?.sources?.length) {
@@ -393,4 +407,4 @@ export default async function handler(req, res) {
   }
 }
 
-export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup };
+export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup, responseLanguageMatches };
