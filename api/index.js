@@ -226,13 +226,6 @@ export default async function handler(req, res) {
       searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 1800)));
     }
 
-    if (false && searchContext && /новост|news/i.test(text)) {
-      const lines = searchContext.split("\n").slice(0, 3).map(line => line.replace(/^\d+\. /, "").replace(/https?:\/\/\S+/g, "").trim());
-      const answer = "Вот что удалось найти в свежих новостях: " + lines.join(". ");
-      const history = [...oldHistory, { role: "user", text: text.slice(0, MAX_HISTORY_MESSAGE_CHARS) }, { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }].slice(-MAX_HISTORY_MESSAGES);
-      return res.status(200).json(aliceResponse(answer, false, history));
-    }
-
     let answer;
     try {
       answer = await askOpenAI(
