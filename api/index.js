@@ -96,14 +96,27 @@ function looksLikePriceQuestion(text) {
   return /бензин|топлив|за литр|сколько стоит|цена|стоимость|price|cost per liter|gasoline/i.test(text);
 }
 
+function priceNumbers(value) {
+  const content = String(value || "");
+  const result = [];
+  const after = /(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:лари|gel|₾|руб(?:лей|ля)?|usd|доллар(?:ов|а)?|\$|евро|eur)/gi;
+  const before = /(?:₾|\$|gel|usd|eur)\s*(\d{1,5}(?:[.,]\d{1,3})?)/gi;
+  for (const match of content.matchAll(after)) result.push(Number(match[1].replace(",", ".")));
+  for (const match of content.matchAll(before)) result.push(Number(match[1].replace(",", ".")));
+  return result.filter(Number.isFinite);
+}
+
 function numericPriceIsGrounded(answer, search) {
-  const claimed = [...String(answer).matchAll(/(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:лари|gel|₾|руб(?:лей|ля)?|usd|доллар(?:ов|а)?|\$|евро|eur)/gi)];
-  if (!claimed.length) return false;
+  const values = priceNumbers(answer);
+  if (!values.length) return false;
   const sources = search?.sources || [];
-  return claimed.every(([full,number]) => sources.some(source => {
-    if (!source.link || !source.snippet) return false;
-    const matches = [...source.snippet.matchAll(/(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:лари|gel|₾|руб(?:лей|ля)?|usd|доллар(?:ов|а)?|\$|евро|eur)/gi)];
-    return matches.some(found => Number(found[1].replace(",",".")) === Number(number.replace(",",".")));
+  const question = String(search?.query || "");
+  const fuel95 = /бензин|топлив|gasoline|petrol|fuel/i.test(question) && /95|аи.?95|premium/i.test(question);
+  return values.every(value => sources.some(source => {
+    if (!/^https:\/\//i.test(String(source.link || "")) || !source.snippet) return false;
+    const sourceText = String(source.title || "") + " " + String(source.snippet || "");
+    if (fuel95 && !/95|аи.?95|premium/i.test(sourceText)) return false;
+    return priceNumbers(source.snippet).some(found => Math.abs(found - value) < 0.001);
   }));
 }
 
@@ -163,7 +176,19 @@ async function searchWeb(query, timeoutMs) {
     const results = Array.isArray(data.organic) ? data.organic : [];
     const selected = globalNews
       ? results.filter(x => !/youtube|rutube|dzen\.ru\/video/i.test(String(x.link||"")) && !/видео|выпуск|спорт|футбол|football|sports/i.test(String(x.title||"")))
-      : results;
+      : geFuel
+        ? [...results].sort((a,b) => {
+            const score = item => {
+              const combined = String(item.title||"")+" "+String(item.snippet||"");
+              const link = String(item.link||"");
+              return (/95|premium/i.test(combined) ? 4:0) +
+                (/gel|lari|лари|₾/i.test(combined) ? 3:0) +
+                (/gulf\.ge|wissol\.ge|rompetrol\.ge|socar\.ge|lukoil\.ge/i.test(link) ? 4:0) +
+                (/\.ge\//i.test(link) ? 1:0);
+            };
+            return score(b)-score(a);
+          })
+        : results;
     const sourceItems = selected.slice(0,4).map(item => ({title:String(item.title||"").slice(0,150),link:String(item.link||"").slice(0,250),date:String(item.date||"").slice(0,45),snippet:String(item.snippet||"").slice(0,320)}));
     const items = selected.slice(0,4).map((item,i) => {
       const title=String(item.title||"").slice(0,170);
@@ -329,7 +354,7 @@ export default async function handler(req, res) {
             answer = await askOpenAI(question,oldHistory,searchContext,Math.max(0,Math.min(OPENAI_TIMEOUT_MS,remainingMs()-200)));
             if (wantsSearch && looksLikePriceQuestion(question)) {
               supported = reliablePriceSources({sources:searchRecord?.sources}).length > 0
-                && numericPriceIsGrounded(answer,{sources:searchRecord?.sources});
+                && numericPriceIsGrounded(answer,{sources:searchRecord?.sources,query:question});
               if (!supported) {
                 answer = userLanguage(text)==="en"
                   ? "The search results do not reliably confirm a current price. I won't invent one. You can ask for the source links."
