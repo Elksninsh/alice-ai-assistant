@@ -4,12 +4,13 @@ const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 3600;
 const SERPER_TIMEOUT_MS = 600;
-const OPENAI_TIMEOUT_MS = 2500;
+const OPENAI_TIMEOUT_MS = 3200;
 
 const SYSTEM_PROMPT = [
   "Ты — полезный голосовой помощник в навыке Яндекс Алисы.",
   "Отвечай естественно, по-русски, кратко и так, чтобы ответ было удобно слушать.",
-  "Обычно используй 1–3 коротких предложения. Не используй Markdown, таблицы, списки с символами или длинные вступления.",
+  "На обычные вопросы отвечай в 1–3 предложениях, но если просят историю, объяснение или творческий текст — дай содержательный законченный ответ, насколько позволяет голосовой формат.",
+  "Учитывай предыдущие реплики и продолжай начатую историю по просьбе пользователя. Не используй Markdown и длинные вступления.",
   "Если вопрос требует актуальных данных и переданы результаты поиска, опирайся на них; не выдумывай отсутствующие факты.",
   "Если не знаешь ответа, честно скажи об этом."
 ].join(" ");
@@ -138,7 +139,8 @@ async function askOpenAI(text, history, searchContext, timeoutMs) {
         model,
         instructions: SYSTEM_PROMPT,
         input,
-        max_output_tokens: 350
+        reasoning: { effort: "minimal" },
+        max_output_tokens: 260
       })
     },
     Math.min(OPENAI_TIMEOUT_MS, timeoutMs)
@@ -216,7 +218,7 @@ export default async function handler(req, res) {
       text,
       oldHistory,
       searchContext,
-      Math.max(0, Math.min(OPENAI_TIMEOUT_MS, remainingMs() - 600))
+      Math.max(0, Math.min(OPENAI_TIMEOUT_MS, remainingMs() - 250))
     );
 
     const history = [
