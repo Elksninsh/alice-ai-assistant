@@ -43,7 +43,7 @@ test("GET health check returns an ok response", async () => {
   await handler({ method: "GET" }, res);
   assert.equal(statusCode, 200);
   assert.equal(payload.ok, true);
-  assert.equal(payload.service, "alice-gemini-serper");
+  assert.equal(payload.service, "alice-openai-serper");
 });
 
 test("launch request returns a valid Alice greeting without external API keys", async () => {
@@ -60,4 +60,24 @@ test("launch request returns a valid Alice greeting without external API keys", 
   assert.equal(payload.version, "1.0");
   assert.match(payload.response.text, /Привет/);
   assert.equal(payload.response.end_session, false);
+});
+
+test("missing OpenAI key produces safe Alice response", async () => {
+  const previous = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    const handler = (await import("../api/index.js")).default;
+    let payload;
+    const res = {
+      status() { return this; },
+      json(value) { payload = value; return value; },
+      setHeader() {}
+    };
+    await handler({ method: "POST", body: { request: { command: "Привет" } } }, res);
+    assert.equal(payload.version, "1.0");
+    assert.match(payload.response.text, /OPENAI_API_KEY/);
+  } finally {
+    if (previous === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previous;
+  }
 });
