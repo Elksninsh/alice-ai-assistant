@@ -127,7 +127,7 @@ function reliablePriceSources(search) {
 function savedSearchSources(search) {
   return (search?.sources || []).slice(0,3).map((item,i) => {
     const date = item.date ? " (" + item.date + ")" : "";
-    return (i+1) + ". " + item.title + date + ": " + item.link;
+    return (i+1) + ". " + sourceSite(item.link) + date + ": " + item.link;
   }).join("\n");
 }
 
@@ -363,7 +363,7 @@ export default async function handler(req, res) {
             answer = await askOpenAI(question,oldHistory,searchContext,Math.max(0,Math.min(OPENAI_TIMEOUT_MS,remainingMs()-200)));
             if (!responseLanguageMatches(question,answer)) {
               console.warn("Wrong-language response rejected");
-              answer = searchPendingMessage(question);
+              answer = wantsSearch ? searchPendingMessage(question) : (userLanguage(question)==="en" ? "I could not prepare an English answer. Please try again." : "Не удалось подготовить ответ на русском языке. Попробуй ещё раз.");
               pendingSearch = wantsSearch ? {query:question} : null;
               supported = false;
             } else if (wantsSearch && looksLikePriceQuestion(question)) {
