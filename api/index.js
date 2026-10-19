@@ -96,11 +96,19 @@ function looksLikePriceQuestion(text) {
   return /бензин|топлив|за литр|сколько стоит|цена|стоимость|price|cost per liter|gasoline/i.test(text);
 }
 
-function numericPriceIsGrounded(answer, context) {
-  const values = [...String(answer).matchAll(/\b(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:лари|gel|₾|руб|usd|доллар|\$|евро|eur)\b/gi)];
-  if (!values.length) return true;
-  const normalized = String(context).replace(/,/g,".");
-  return values.every(match => normalized.includes(match[1].replace(/,/g,".")));
+function numericPriceIsGrounded(answer, search) {
+  const claimed = [...String(answer).matchAll(/(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:лари|gel|₾|руб(?:лей|ля)?|usd|доллар(?:ов|а)?|\$|евро|eur)/gi)];
+  if (!claimed.length) return false;
+  const sources = search?.sources || [];
+  return claimed.every(([full,number]) => sources.some(source => {
+    if (!source.link || !source.snippet) return false;
+    const matches = [...source.snippet.matchAll(/(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:лари|gel|₾|руб(?:лей|ля)?|usd|доллар(?:ов|а)?|\$|евро|eur)/gi)];
+    return matches.some(found => Number(found[1].replace(",",".")) === Number(number.replace(",",".")));
+  }));
+}
+
+function reliablePriceSources(search) {
+  return (search?.sources || []).filter(s => /^https:\/\//i.test(s.link) && s.snippet && !/youtube|tiktok|reddit|facebook|instagram|pinterest/i.test(s.link));
 }
 
 function savedSearchSources(search) {
@@ -117,6 +125,7 @@ async function searchWeb(query, timeoutMs) {
   const language = userLanguage(query);
   const latest = /сегодня|сейчас|последн|новост|актуальн|свеж|today|latest|breaking|news/i.test(query);
   const globalNews = /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query);
+  const geoGeorgia = /грузи[ия]|тбилиси|georgia|tbilisi/i.test(query);
   const actualQuery = globalNews
     ? (language === "ru" ? "важные международные события мир политика экономика " : "major international developments world politics economy ") + new Date().toISOString().slice(0,10)
     : query;
@@ -124,14 +133,14 @@ async function searchWeb(query, timeoutMs) {
     const {response,data} = await fetchJson("https://google.serper.dev/search", {
       method:"POST",
       headers:{"X-API-KEY":key,"Content-Type":"application/json"},
-      body:JSON.stringify({q:actualQuery,gl:language==="ru"?"ru":"us",hl:language,num:6,...(latest?{tbs:"qdr:w"}:{})})
+      body:JSON.stringify({q:actualQuery,gl:geoGeorgia?"ge":language==="ru"?"ru":"us",hl:language,num:6,...(latest?{tbs:"qdr:w"}:{})})
     },Math.min(SERPER_TIMEOUT_MS,timeoutMs));
     if (!response.ok) return {text:"",status:"http_"+response.status,sources:[]};
     const results = Array.isArray(data.organic) ? data.organic : [];
     const selected = globalNews
       ? results.filter(x => !/youtube|rutube|dzen\.ru\/video/i.test(String(x.link||"")) && !/видео|выпуск|спорт|футбол|football|sports/i.test(String(x.title||"")))
       : results;
-    const sourceItems = selected.slice(0,4).map(item => ({title:String(item.title||"").slice(0,150),link:String(item.link||"").slice(0,250),date:String(item.date||"").slice(0,45)}));
+    const sourceItems = selected.slice(0,4).map(item => ({title:String(item.title||"").slice(0,150),link:String(item.link||"").slice(0,250),date:String(item.date||"").slice(0,45),snippet:String(item.snippet||"").slice(0,320)}));
     const items = selected.slice(0,4).map((item,i) => {
       const title=String(item.title||"").slice(0,170);
       const snippet=String(item.snippet||"").slice(0,250);
@@ -246,6 +255,7 @@ export default async function handler(req, res) {
   try {
     let searchContext = "";
     let searchRecord = oldSearch;
+    let currentSearch = null;
     let answer;
     if (isSourceFollowup(text)) {
       if (oldSearch?.sources?.length) {
@@ -260,6 +270,7 @@ export default async function handler(req, res) {
       if (wantsSearch) {
         const search = await searchWeb(text, Math.max(0,remainingMs()-2750));
         searchContext = search.text;
+        currentSearch = search;
         searchRecord = search.sources?.length ? {query:text,sources:search.sources} : null;
         console.info("Search status:",search.status,"sources:",search.sources?.length || 0);
       }
@@ -271,7 +282,7 @@ export default async function handler(req, res) {
             text, oldHistory, searchContext,
             Math.max(0,Math.min(OPENAI_TIMEOUT_MS,remainingMs()-180))
           );
-          if (wantsSearch && looksLikePriceQuestion(text) && !numericPriceIsGrounded(answer,searchContext)) {
+          if (wantsSearch && looksLikePriceQuestion(text) && (!reliablePriceSources(currentSearch).length || !numericPriceIsGrounded(answer,currentSearch))) {
             console.warn("Ungrounded price blocked");
             answer = userLanguage(text)==="en"
               ? "I found search results, but couldn't verify a reliable price from them. I won't guess."
@@ -299,4 +310,4 @@ export default async function handler(req, res) {
   }
 }
 
-export { aliceResponse, fitAliceText, isSearchIntent, safeHistory };
+export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup };
