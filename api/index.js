@@ -3,7 +3,8 @@ const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 3600;
-const SERPER_TIMEOUT_MS = 600;
+const SEARCH_TIMEOUT_MS = 750;
+const SERPER_TIMEOUT_MS = 650;
 const OPENAI_TIMEOUT_MS = 3200;
 
 const SYSTEM_PROMPT = [
@@ -12,7 +13,7 @@ const SYSTEM_PROMPT = [
   "Будь вдумчивым: для задач на логику и вычисления сначала проверь решение; не подменяй рассуждение уверенным предположением.",
   "Для простых вопросов достаточно пары предложений; для сложных дай ясное объяснение. Если ответ не помещается в короткую голосовую реплику, заверши мысль и предложи продолжить.",
   "Истории рассказывай связно, грамотно и с законченным эпизодом. Не обрывай текст на полуслове.",
-  "Не говори, что искал в интернете, если результаты поиска не были предоставлены. Для актуальных сведений без поиска честно обозначай ограничение, не выдумывай новости, цены и источники.",
+  "Если результаты поиска переданы, используй их для свежих фактов, по возможности называй источник кратко. Не говори, что искал в интернете, если результаты поиска не были предоставлены. Для актуальных сведений без поиска честно обозначай ограничение, не выдумывай новости, цены и источники.",
   "Если вопрос неоднозначен, задай один конкретный уточняющий вопрос; если понятен — отвечай сразу.",
   "Не используй Markdown, таблицы, длинные списки, шаблонные приветствия и повторяющиеся фразы. Твой ответ будет произнесён вслух.",
   "Не заявляй, что управляешь устройствами, устанавливаешь напоминания или выполняешь действия, если такой функции у тебя нет."
@@ -70,6 +71,28 @@ async function fetchJson(url, options, timeoutMs) {
     return { response, data };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function searchBrave(query, timeoutMs) {
+  const key = process.env.BRAVE_SEARCH_API_KEY;
+  if (!key || timeoutMs < 150) return "";
+  try {
+    const url = "https://api.search.brave.com/res/v1/web/search?" +
+      new URLSearchParams({ q: query, count: "3", search_lang: "ru" }).toString();
+    const { response, data } = await fetchJson(url, {
+      headers: { "Accept": "application/json", "X-Subscription-Token": key }
+    }, timeoutMs);
+    if (!response.ok) {
+      console.warn("Brave Search HTTP", response.status);
+      return "";
+    }
+    return (Array.isArray(data.web?.results) ? data.web.results : []).slice(0, 3)
+      .map((item, i) => `${i + 1}. ${String(item.title || "").slice(0, 160)}: ${String(item.description || "").slice(0, 330)} ${String(item.url || "").slice(0, 220)}`)
+      .join("\\n");
+  } catch {
+    console.warn("Brave Search unavailable within time budget");
+    return "";
   }
 }
 
@@ -212,9 +235,14 @@ export default async function handler(req, res) {
 
   try {
     let searchContext = "";
-    if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      // Search has a very short budget because Alice expects a response within 4.5 seconds.
-      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2600)));
+    if (isSearchIntent(text)) {
+      const searchBudget = Math.min(SEARCH_TIMEOUT_MS, Math.max(0, remainingMs() - 2700));
+      if (process.env.BRAVE_SEARCH_API_KEY) {
+        searchContext = await searchBrave(text, searchBudget);
+      }
+      if (!searchContext && process.env.SERPER_API_KEY) {
+        searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2700)));
+      }
     }
 
     const answer = await askOpenAI(
