@@ -1,9 +1,9 @@
 {
-  "name": "alice-gemini-serper-template",
-  "version": "1.0.0",
+  "name": "alice-ai-assistant",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Minimal Vercel webhook for a Yandex Alice skill powered by Gemini with optional Serper web search",
+  "description": "Yandex Alice voice assistant using OpenAI and optional Serper search",
   "engines": {
     "node": ">=22"
   },
