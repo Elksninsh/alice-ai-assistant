@@ -3,8 +3,8 @@ const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 4200;
-const SERPER_TIMEOUT_MS = 1250;
-const OPENAI_TIMEOUT_MS = 2800;
+const SERPER_TIMEOUT_MS = 2300;
+const OPENAI_TIMEOUT_MS = 2700;
 
 const SYSTEM_PROMPT = [
   "Ты — Смарт Скилл, интеллектуальный голосовой собеседник. Общайся естественно, тепло, уважительно и на русском языке, на «ты».",
@@ -74,7 +74,7 @@ async function fetchJson(url, options, timeoutMs) {
 }
 
 function searchQuery(query) {
-  if (/главн.{0,20}новост|новост.{0,20}мир|world news/i.test(query)) return "главные события в мире сегодня международная политика экономика происшествия -спорт -футбол -велоспорт -волейбол";
+  if (/главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query)) return "главные мировые новости сегодня международные события политика экономика -спорт -футбол -волейбол";
   return query;
 }
 
@@ -102,7 +102,7 @@ async function searchWeb(query, timeoutMs) {
     }
 
     const results = Array.isArray(data.news) ? data.news : (Array.isArray(data.organic) ? data.organic : []);
-    const globalNews = /главн.{0,20}новост|новост.{0,20}мир|world news/i.test(query);
+    const globalNews = /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query);
     const relevant = globalNews ? results.filter(item => !/футбол|волейбол|баскетбол|теннис|погачар|тур де франс|чемпионат|флик|барселон|хоккей|спорт/i.test(`${item.title || ""} ${item.snippet || ""}`)) : results;
     const items = relevant
       .slice(0, 4)
@@ -223,9 +223,25 @@ export default async function handler(req, res) {
   try {
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 1800)));
+      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - ( /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(text) ? 350 : 2850))));
     }
 
+    const globalNewsRequest = /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(text);
+    if (globalNewsRequest && !searchContext) {
+      const answer = "Не удалось получить свежие новости из поискового сервиса. Попробуй чуть позже.";
+      const history = [...oldHistory, {role:"user", text:text.slice(0, MAX_HISTORY_MESSAGE_CHARS)}, {role:"model", text:answer}].slice(-MAX_HISTORY_MESSAGES);
+      return res.status(200).json(aliceResponse(answer, false, history));
+    }
+    if (globalNewsRequest && searchContext) {
+      const headlines = searchContext.split("\n").slice(0, 3).map(line => {
+        const cleaned = line.replace(/^\d+\. /, "").replace(/https?:\/\/\S+/g, "").trim();
+        const [headline, ...detail] = cleaned.split(": ");
+        return detail.length ? `${headline}: ${detail.join(": ").slice(0, 125)}` : headline;
+      });
+      const brief = "Вот что удалось найти в международных новостях: " + headlines.join(". ");
+      const history = [...oldHistory, {role:"user", text:text.slice(0, MAX_HISTORY_MESSAGE_CHARS)}, {role:"model", text:brief.slice(0, MAX_HISTORY_MESSAGE_CHARS)}].slice(-MAX_HISTORY_MESSAGES);
+      return res.status(200).json(aliceResponse(brief, false, history));
+    }
     let answer;
     try {
       answer = await askOpenAI(
