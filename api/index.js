@@ -349,7 +349,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       service: "alice-openai-serper",
-      version: "two-stage-search-1",
+      version: "station-ready-state-1",
       message: "Webhook is ready. Yandex Dialogs should send POST requests to /api."
     });
   }
