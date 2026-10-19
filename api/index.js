@@ -307,7 +307,6 @@ export default async function handler(req, res) {
         searchContext = serializeSearch(oldSearch);
         searchRecord = oldSearch;
       } else if (wantsSearch) {
-        checkedWeb = true;
         const search = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0,remainingMs()-1800)));
         console.info("Search:", search.status, "sources:",search.sources?.length || 0);
         if (search.sources?.length) {
