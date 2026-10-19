@@ -161,7 +161,7 @@ async function askOpenAI(text, history, searchContext, timeoutMs) {
 
 function errorForUser(error) {
   switch (error?.message) {
-    case "MISSING_GEMINI_KEY":
+    case "MISSING_OPENAI_KEY":
       return "Сервер пока не настроен. Проверьте переменную OPENAI_API_KEY в настройках Vercel.";
     case "OPENAI_KEY_REJECTED":
       return "Не удалось подключиться к OpenAI. Проверьте API-ключ в настройках Vercel.";
@@ -227,7 +227,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json(aliceResponse(answer, false, history));
   } catch (error) {
-    const safeError = error?.message === "AbortError" ? "TIME_BUDGET_EXHAUSTED" : error;
+    const safeError = error?.name === "AbortError" ? new Error("TIME_BUDGET_EXHAUSTED") : error;
     console.warn("Alice webhook returned a fallback response:", safeError?.message || "unknown error");
     return res.status(200).json(aliceResponse(errorForUser(safeError), false, oldHistory));
   }
