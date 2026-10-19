@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aliceResponse, fitAliceText, isSearchIntent, safeHistory } from "../api/index.js";
+import { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup } from "../api/index.js";
 
 test("Alice response uses required response envelope", () => {
   const result = aliceResponse("Привет", false, [{ role: "user", text: "тест" }]);
@@ -22,13 +22,13 @@ test("long responses are cut at a natural boundary and stay within Alice limit",
   assert.ok(value.endsWith("."));
 });
 
-test("history filters malformed messages and keeps last 8", () => {
+test("history filters malformed messages and keeps last 12", () => {
   const input = Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? "model" : "user", text: String(i) }));
   input.push({ role: "hacker", text: "ignore" }, { role: "user", text: 17 });
   const result = safeHistory(input);
-  assert.equal(result.length, 8);
-  assert.equal(result[0].text, "4");
-  assert.equal(result[7].text, "11");
+  assert.equal(result.length, 12);
+  assert.equal(result[0].text, "0");
+  assert.equal(result[11].text, "11");
 });
 
 test("GET health check returns an ok response", async () => {
@@ -80,4 +80,30 @@ test("missing OpenAI key produces safe Alice response", async () => {
     if (previous === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previous;
   }
+});
+
+test("respond in the user's language", () => {
+  assert.equal(userLanguage("Сколько сейчас стоит бензин АИ-95 в Грузии?"), "ru");
+  assert.equal(userLanguage("Search online for gas prices in Georgia"), "en");
+});
+
+test("source follow-up is not mistaken for a fresh web query", () => {
+  assert.equal(isSourceFollowup("Пришли источник информации"), true);
+  assert.equal(isSourceFollowup("Найди бензин в Грузии"), false);
+});
+
+test("unverified fuel price 16.25 GEL is rejected", () => {
+  const search = { sources: [{
+    link: "https://example.ge/prices",
+    title: "Gas prices",
+    snippet: "АИ-95 стоит 3,95 лари за литр"
+  }] };
+  assert.equal(numericPriceIsGrounded("Цена 16,25 лари за литр", search), false);
+  assert.equal(numericPriceIsGrounded("Цена 3,95 лари за литр", search), true);
+});
+
+test("numeric substrings and currency-free snippets cannot validate prices", () => {
+  const search = { sources: [{link:"https://example.ge",snippet:"Показатель 316,25 и 16,25 километра"}] };
+  assert.equal(numericPriceIsGrounded("16,25 лари", search), false);
+  assert.equal(numericPriceIsGrounded("16,25 лари", {sources:[]}), false);
 });
