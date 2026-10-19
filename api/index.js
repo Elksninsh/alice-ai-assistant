@@ -18,6 +18,70 @@ const SYSTEM_PROMPT = [
   "Не заявляй, что управляешь устройствами, устанавливаешь напоминания или выполняешь действия, если такой функции у тебя нет."
 ].join(" ");
 
+
+const SESSION_STATE_LIMIT_BYTES = 990;
+
+function compactUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:") return "";
+    url.search = "";
+    url.hash = "";
+    const clean = url.toString();
+    return Buffer.byteLength(clean, "utf8") <= 240 ? clean : "";
+  } catch { return ""; }
+}
+
+function compactSessionState(history, lastSearch, pendingSearch) {
+  const state = {
+    history: safeHistory(history).slice(-6).map(item => ({
+      role: item.role,
+      text: item.text.slice(0, 190)
+    }))
+  };
+  if (lastSearch && Array.isArray(lastSearch.sources)) {
+    const sources = lastSearch.sources.slice(0, 3).map(item => ({
+      link: compactUrl(item.link),
+      title: String(item.title || "").slice(0, 75),
+      snippet: String(item.snippet || "").slice(0, 165),
+      date: String(item.date || "").slice(0, 22)
+    })).filter(item => item.link);
+    if (sources.length) {
+      state.lastSearch = { sources, answerSupported: lastSearch.answerSupported === true };
+    }
+  }
+  if (pendingSearch?.query && state.lastSearch?.sources?.length) {
+    state.pendingSearch = { query: String(pendingSearch.query).slice(0, 165) };
+  }
+
+  const bytes = () => Buffer.byteLength(JSON.stringify(state), "utf8");
+  let guard = 0;
+  while (bytes() > SESSION_STATE_LIMIT_BYTES && guard++ < 100) {
+    if (state.history.length > 2) {
+      state.history.shift();
+    } else if (state.lastSearch?.sources?.length > 1) {
+      state.lastSearch.sources.pop();
+    } else if (state.history.length > 0 && state.history[0].text.length > 65) {
+      state.history[0].text = state.history[0].text.slice(0, state.history[0].text.length - 25);
+    } else if (state.pendingSearch?.query?.length > 65) {
+      state.pendingSearch.query = state.pendingSearch.query.slice(0, state.pendingSearch.query.length - 25);
+    } else if (state.lastSearch?.sources?.[0]?.snippet?.length > 30) {
+      state.lastSearch.sources[0].snippet = state.lastSearch.sources[0].snippet.slice(0, -25);
+    } else if (state.history.length) {
+      state.history.shift();
+    } else if (state.lastSearch?.sources?.length) {
+      state.lastSearch.sources.pop();
+      if (!state.lastSearch.sources.length) {
+        delete state.lastSearch;
+        delete state.pendingSearch;
+      }
+    } else {
+      break;
+    }
+  }
+  return state;
+}
+
 function aliceResponse(text, endSession = false, history = [], lastSearch = null, pendingSearch = null) {
   return {
     version: "1.0",
@@ -25,7 +89,7 @@ function aliceResponse(text, endSession = false, history = [], lastSearch = null
       text: fitAliceText(text),
       end_session: endSession
     },
-    session_state: { history, ...(lastSearch ? {lastSearch} : {}), ...(pendingSearch ? {pendingSearch} : {}) }
+    session_state: compactSessionState(history, lastSearch, pendingSearch)
   };
 }
 
@@ -299,6 +363,16 @@ export default async function handler(req, res) {
   const remainingMs = () => TOTAL_RESPONSE_BUDGET_MS - (Date.now() - startedAt);
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
+  const utterance = String(body?.request?.original_utterance || "").trim().toLowerCase();
+  if (utterance === "ping") {
+    return res.status(200).json(aliceResponse("ok"));
+  }
+  if (/^(?:помощь|что ты умеешь|help|what can you do)[?.!\s]*$/i.test(text)) {
+    const message = userLanguage(text) === "en"
+      ? "I can answer questions, help solve problems, and look up information online. Ask me to search. If I need more time, say 'continue'."
+      : "Я могу отвечать на вопросы, обсуждать идеи и искать информацию в интернете. Скажи «найди» и задай вопрос. Если поиск займёт время, я предложу сказать «продолжай».";
+    return res.status(200).json(aliceResponse(message, false, [], body?.state?.session?.lastSearch || null));
+  }
   const oldHistory = safeHistory(body?.state?.session?.history);
   const oldSearch = body?.state?.session?.lastSearch || null;
   const oldPending = body?.state?.session?.pendingSearch || null;
@@ -407,4 +481,4 @@ export default async function handler(req, res) {
   }
 }
 
-export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup, responseLanguageMatches };
+export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup, responseLanguageMatches, compactSessionState };
