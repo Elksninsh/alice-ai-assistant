@@ -3,7 +3,7 @@ const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 4200;
-const SERPER_TIMEOUT_MS = 1050;
+const SERPER_TIMEOUT_MS = 2200;
 const OPENAI_TIMEOUT_MS = 2850;
 
 const SYSTEM_PROMPT = [
@@ -216,7 +216,14 @@ export default async function handler(req, res) {
   try {
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2950)));
+      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 1800)));
+    }
+
+    if (searchContext && /новост|news/i.test(text)) {
+      const lines = searchContext.split("\n").slice(0, 3).map(line => line.replace(/^\d+\. /, "").replace(/https?:\/\/\S+/g, "").trim());
+      const answer = "Вот что удалось найти в свежих новостях: " + lines.join(". ");
+      const history = [...oldHistory, { role: "user", text: text.slice(0, MAX_HISTORY_MESSAGE_CHARS) }, { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }].slice(-MAX_HISTORY_MESSAGES);
+      return res.status(200).json(aliceResponse(answer, false, history));
     }
 
     const answer = await askOpenAI(
