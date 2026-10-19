@@ -3,16 +3,16 @@ const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 4200;
-const SERPER_TIMEOUT_MS = 2200;
-const OPENAI_TIMEOUT_MS = 2850;
+const SERPER_TIMEOUT_MS = 1250;
+const OPENAI_TIMEOUT_MS = 2800;
 
 const SYSTEM_PROMPT = [
   "Ты — Смарт Скилл, интеллектуальный голосовой собеседник. Общайся естественно, тепло, уважительно и на русском языке, на «ты».",
   "Отвечай по существу и учитывай контекст беседы. Если человек уточняет, возражает или просит продолжить, реагируй на предыдущие реплики, не начинай всё заново.",
-  "Будь вдумчивым: для задач на логику и вычисления сначала проверь решение; не подменяй рассуждение уверенным предположением.",
+  "Будь вдумчивым: для задач на логику и вычисления сначала проверь решение; не подменяй рассуждение уверенным предположением. При сравнении вариантов оцени числа и компромиссы, а не только общие плюсы и минусы.",
   "Для простых вопросов достаточно пары предложений; для сложных дай ясное объяснение. Если ответ не помещается в короткую голосовую реплику, заверши мысль и предложи продолжить.",
   "Истории рассказывай связно, грамотно и с законченным эпизодом. Не обрывай текст на полуслове.",
-  "Если результаты поиска переданы, используй их для свежих фактов, по возможности называй источник кратко. Не говори, что искал в интернете, если результаты поиска не были предоставлены. Для актуальных сведений без поиска честно обозначай ограничение, не выдумывай новости, цены и источники.",
+  "Если результаты поиска переданы, выбирай только релевантные и подтверждённые сведения, называй источник кратко. Не смешивай спортивные новости с главными мировыми событиями. Не придумывай деталей, которых нет в результатах. Если результаты нерелевантны, честно скажи об этом. Не утверждай, что искал в интернете, если результаты поиска не предоставлены.",
   "Если вопрос неоднозначен, задай один конкретный уточняющий вопрос; если понятен — отвечай сразу.",
   "Не используй Markdown, таблицы, длинные списки, шаблонные приветствия и повторяющиеся фразы. Твой ответ будет произнесён вслух.",
   "Не заявляй, что управляешь устройствами, устанавливаешь напоминания или выполняешь действия, если такой функции у тебя нет."
@@ -73,6 +73,11 @@ async function fetchJson(url, options, timeoutMs) {
   }
 }
 
+function searchQuery(query) {
+  if (/главн.{0,20}новост|новост.{0,20}мир|world news/i.test(query)) return "главные события в мире сегодня международная политика экономика происшествия -спорт -футбол -велоспорт -волейбол";
+  return query;
+}
+
 async function searchWeb(query, timeoutMs) {
   const key = process.env.SERPER_API_KEY;
   if (!key || timeoutMs < 150) return "";
@@ -86,7 +91,7 @@ async function searchWeb(query, timeoutMs) {
           "X-API-KEY": key,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: 4 })
+        body: JSON.stringify({ q: searchQuery(query), gl: "ru", hl: "ru", num: 8 })
       },
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
@@ -97,8 +102,10 @@ async function searchWeb(query, timeoutMs) {
     }
 
     const results = Array.isArray(data.news) ? data.news : (Array.isArray(data.organic) ? data.organic : []);
-    const items = results
-      .slice(0, 3)
+    const globalNews = /главн.{0,20}новост|новост.{0,20}мир|world news/i.test(query);
+    const relevant = globalNews ? results.filter(item => !/футбол|волейбол|баскетбол|теннис|погачар|тур де франс|чемпионат|флик|барселон|хоккей|спорт/i.test(`${item.title || ""} ${item.snippet || ""}`)) : results;
+    const items = relevant
+      .slice(0, 4)
       .map((item, i) => {
         const title = String(item.title || "").slice(0, 180);
         const snippet = String(item.snippet || "").slice(0, 350);
@@ -219,19 +226,26 @@ export default async function handler(req, res) {
       searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 1800)));
     }
 
-    if (searchContext && /новост|news/i.test(text)) {
+    if (false && searchContext && /новост|news/i.test(text)) {
       const lines = searchContext.split("\n").slice(0, 3).map(line => line.replace(/^\d+\. /, "").replace(/https?:\/\/\S+/g, "").trim());
       const answer = "Вот что удалось найти в свежих новостях: " + lines.join(". ");
       const history = [...oldHistory, { role: "user", text: text.slice(0, MAX_HISTORY_MESSAGE_CHARS) }, { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }].slice(-MAX_HISTORY_MESSAGES);
       return res.status(200).json(aliceResponse(answer, false, history));
     }
 
-    const answer = await askOpenAI(
+    let answer;
+    try {
+      answer = await askOpenAI(
       isSearchIntent(text) && !searchContext ? text + " (Если свежие данные недоступны, не выдумывай новости; кратко сообщи об ограничении.)" : text,
       oldHistory,
       searchContext,
       Math.max(0, Math.min(OPENAI_TIMEOUT_MS, remainingMs() - 250))
-    );
+      );
+    } catch (modelError) {
+      if (!searchContext || !/TIME_BUDGET_EXHAUSTED|AbortError/.test(String(modelError?.message || modelError?.name))) throw modelError;
+      const titles = searchContext.split("\n").slice(0, 3).map(line => line.replace(/^\d+\. /, "").split(": ")[0].replace(/\s*\([^)]*\)$/, "").trim());
+      answer = "Не успела подробно обработать результаты поиска. Вот найденные заголовки, без проверки содержания: " + titles.join("; ") + ".";
+    }
 
     const history = [
       ...oldHistory,
