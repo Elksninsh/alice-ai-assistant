@@ -1,10 +1,10 @@
-const DEFAULT_MODEL = "gpt-5-mini";
+const DEFAULT_MODEL = "gpt-4.1-mini";
 const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 3600;
-const SERPER_TIMEOUT_MS = 650;
-const OPENAI_TIMEOUT_MS = 3200;
+const SERPER_TIMEOUT_MS = 450;
+const OPENAI_TIMEOUT_MS = 3100;
 
 const SYSTEM_PROMPT = [
   "Ты — Смарт Скилл, интеллектуальный голосовой собеседник. Общайся естественно, тепло, уважительно и на русском языке, на «ты».",
@@ -142,8 +142,8 @@ async function askOpenAI(text, history, searchContext, timeoutMs) {
         model,
         instructions: SYSTEM_PROMPT,
         input,
-        reasoning: { effort: "minimal" },
-        max_output_tokens: 220
+        ...(model.startsWith("gpt-5") ? { reasoning: { effort: "minimal" } } : {}),
+        max_output_tokens: 190
       })
     },
     Math.min(OPENAI_TIMEOUT_MS, timeoutMs)
@@ -213,11 +213,11 @@ export default async function handler(req, res) {
   try {
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2700)));
+      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 3200)));
     }
 
     const answer = await askOpenAI(
-      text,
+      isSearchIntent(text) && !searchContext ? text + " (Если свежие данные недоступны, не выдумывай новости; кратко сообщи об ограничении.)" : text,
       oldHistory,
       searchContext,
       Math.max(0, Math.min(OPENAI_TIMEOUT_MS, remainingMs() - 250))
