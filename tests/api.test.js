@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup, responseLanguageMatches } from "../api/index.js";
+import { aliceResponse, fitAliceText, isSearchIntent, safeHistory, userLanguage, numericPriceIsGrounded, isSourceFollowup, responseLanguageMatches, compactSessionState } from "../api/index.js";
 
 test("Alice response uses required response envelope", () => {
   const result = aliceResponse("Привет", false, [{ role: "user", text: "тест" }]);
@@ -118,4 +118,38 @@ test("recognize GEL amount before and after the number", () => {
   const source={sources:[{link:"https://gulf.ge/prices",title:"Premium 95 in Georgia",snippet:"Premium 95: ₾ 3.95 per litre"}],query:"Сколько стоит бензин АИ-95 в Грузии?"};
   assert.equal(numericPriceIsGrounded("Цена 3,95 лари за литр",source),true);
   assert.equal(numericPriceIsGrounded("Цена 16,25 лари за литр",source),false);
+});
+
+test("Alice session state remains under 1KB even with long history and search sources", () => {
+  const history = Array.from({length:12},(_,i)=>({role:i%2?"model":"user",text:"Продолжительное сообщение про Барсика и рыбку ".repeat(20)}));
+  const search = {sources:Array.from({length:4},(_,i)=>({
+    link:"https://example.ge/fuel-prices/very-long-premium-95-article",
+    title:"Georgian gasoline and petrol stations daily rates from a long title ".repeat(4),
+    snippet:"Стоимость топлива в Грузии сегодня ".repeat(20),
+    date:"19 October 2026"
+  })),answerSupported:false};
+  const state = compactSessionState(history,search,{query:"Сколько сейчас стоит бензин АИ-95 в Грузии? " .repeat(8)});
+  assert.ok(Buffer.byteLength(JSON.stringify(state),"utf8")<=1024);
+  assert.ok(state.lastSearch.sources.length>=1);
+  assert.ok(state.pendingSearch.query);
+});
+
+test("help command is local and does not require OpenAI credentials", async () => {
+  const handler = (await import("../api/index.js")).default;
+  let payload;
+  await handler({method:"POST",body:{request:{command:"Что ты умеешь?"}}},{
+    status(){return this},json(data){payload=data;return data},setHeader(){}
+  });
+  assert.match(payload.response.text,/могу/);
+  assert.equal(payload.response.end_session,false);
+});
+
+test("Yandex ping has a fast response with a valid envelope", async () => {
+  const handler=(await import("../api/index.js")).default;
+  let payload;
+  await handler({method:"POST",body:{request:{command:"",original_utterance:"ping"}}},{
+    status(){return this},json(data){payload=data;return data},setHeader(){}
+  });
+  assert.equal(payload.version,"1.0");
+  assert.equal(payload.response.text,"ok");
 });
