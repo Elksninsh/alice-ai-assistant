@@ -81,7 +81,7 @@ async function searchWeb(query, timeoutMs) {
     const {response,data}=await fetchJson("https://google.serper.dev/search",{
       method:"POST",
       headers:{"X-API-KEY":key,"Content-Type":"application/json"},
-      body:JSON.stringify({q:/главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query) ? "главные события в мире 19 октября 2026 международные новости -спорт -видео" : query,gl:"ru",hl:"ru",num:6})
+      body:JSON.stringify({q:/главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query) ? "главные события в мире " + new Date().toISOString().slice(0,10) + " международные новости -спорт -видео" : query,gl:"ru",hl:"ru",num:6})
     },Math.min(SERPER_TIMEOUT_MS,timeoutMs));
     if (!response.ok) return {text:"",status:"HTTP "+response.status};
     const results=Array.isArray(data.organic)?data.organic:[];
