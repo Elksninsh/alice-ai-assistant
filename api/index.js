@@ -74,7 +74,7 @@ async function fetchJson(url, options, timeoutMs) {
 }
 
 function searchQuery(query) {
-  if (/главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query)) return "главные мировые новости сегодня международные события политика экономика -спорт -футбол -волейбол";
+  if (/главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query)) return "международные новости сегодня Reuters AP BBC мировые события политика экономика -спорт -футбол -видео";
   return query;
 }
 
@@ -89,7 +89,7 @@ async function searchWeb(query, timeoutMs) {
       {
         method: "POST",
         headers: { "X-API-KEY": key, "Content-Type": "application/json" },
-        body: JSON.stringify({ q: searchQuery(query), gl: "ru", hl: "ru", num: 8 })
+        body: JSON.stringify({ q: searchQuery(query), gl: "us", hl: "en", num: 10, tbs: "qdr:d" })
       },
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
@@ -100,10 +100,18 @@ async function searchWeb(query, timeoutMs) {
     const results = Array.isArray(data.news) ? data.news : (Array.isArray(data.organic) ? data.organic : []);
     const globalNews = /главн.{0,35}(новост|международн)|новост.{0,35}мир|world news/i.test(query);
     const relevant = globalNews
-      ? results.filter(item => !/футбол|волейбол|баскетбол|теннис|погачар|тур де франс|чемпионат|флик|барселон|хоккей|спорт/i.test(String(item.title || "")))
+      ? results.filter(item => {
+          const title = String(item.title || "");
+          const link = String(item.link || "");
+          const date = String(item.date || "").toLowerCase();
+          if (/футбол|волейбол|баскетбол|теннис|погачар|тур де франс|чемпионат|флик|барселон|хоккей|спорт|sports|soccer|football|video|видео|выпуск|дайджест/i.test(title)) return false;
+          if (/youtube|rutube|dzen\.ru\/video|tiktok/i.test(link)) return false;
+          if (/week|month|year|недел|месяц|год|2024|2025/i.test(date + " " + title)) return false;
+          return true;
+        })
       : results;
     console.info("Serper result counts", results.length, relevant.length);
-    const items = relevant.slice(0, 4).map((item, i) => {
+    const items = relevant.slice(0, 5).map((item, i) => {
       const title = String(item.title || "").slice(0, 180);
       const snippet = String(item.snippet || "").slice(0, 260);
       const published = String(item.date || "").slice(0, 50);
@@ -238,7 +246,7 @@ export default async function handler(req, res) {
         const [headline, ...detail] = cleaned.split(": ");
         return detail.length ? `${headline}: ${detail.join(": ").slice(0, 125)}` : headline;
       });
-      const brief = "Вот что удалось найти в международных новостях: " + headlines.join(". ");
+      const brief = "Вот три найденных международных сообщения. Их значимость и достоверность я не могу независимо подтвердить: " + headlines.join(". ");
       const history = [...oldHistory, {role:"user", text:text.slice(0, MAX_HISTORY_MESSAGE_CHARS)}, {role:"model", text:brief.slice(0, MAX_HISTORY_MESSAGE_CHARS)}].slice(-MAX_HISTORY_MESSAGES);
       return res.status(200).json(aliceResponse(brief, false, history));
     }
