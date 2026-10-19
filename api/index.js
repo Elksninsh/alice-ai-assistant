@@ -363,6 +363,9 @@ export default async function handler(req, res) {
   const remainingMs = () => TOTAL_RESPONSE_BUDGET_MS - (Date.now() - startedAt);
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
+  const oldHistory = safeHistory(body?.state?.session?.history);
+  const oldSearch = body?.state?.session?.lastSearch || null;
+  const oldPending = body?.state?.session?.pendingSearch || null;
   const utterance = String(body?.request?.original_utterance || "").trim().toLowerCase();
   if (utterance === "ping") {
     return res.status(200).json(aliceResponse("ok"));
@@ -371,12 +374,8 @@ export default async function handler(req, res) {
     const message = userLanguage(text) === "en"
       ? "I can answer questions, help solve problems, and look up information online. Ask me to search. If I need more time, say 'continue'."
       : "Я могу отвечать на вопросы, обсуждать идеи и искать информацию в интернете. Скажи «найди» и задай вопрос. Если поиск займёт время, я предложу сказать «продолжай».";
-    return res.status(200).json(aliceResponse(message, false, [], body?.state?.session?.lastSearch || null));
+    return res.status(200).json(aliceResponse(message, false, oldHistory, oldSearch, oldPending));
   }
-  const oldHistory = safeHistory(body?.state?.session?.history);
-  const oldSearch = body?.state?.session?.lastSearch || null;
-  const oldPending = body?.state?.session?.pendingSearch || null;
-
   if (!text) {
     return res.status(200).json(aliceResponse(
       "Привет! Я Смарт Скилл. Можем обсудить любую тему, разобраться в задаче или просто поговорить. С чего начнём?",
