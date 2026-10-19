@@ -30,7 +30,7 @@ async function waitForDeployment() {
     try {
       const response=await fetch(api,{signal:AbortSignal.timeout(5000)});
       const data=await response.json();
-      if (response.ok && data.version==="two-stage-search-1") {
+      if (response.ok && data.version==="station-ready-state-1") {
         console.log("Updated production webhook is available:",data.version);
         return;
       }
