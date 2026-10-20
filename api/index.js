@@ -1,4 +1,5 @@
 const DEFAULT_MODEL = "gpt-4.1-mini";
+const ASSISTANT_NAME = "Умный Филин";
 const MAX_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
@@ -7,7 +8,7 @@ const SERPER_TIMEOUT_MS = 1900;
 const OPENAI_TIMEOUT_MS = 3150;
 
 const SYSTEM_PROMPT = [
-  "Ты — Смарт Скилл, интеллектуальный голосовой собеседник. Общайся естественно, тепло и уважительно. ВСЕГДА отвечай на языке последнего вопроса пользователя: русский вопрос — полностью русский ответ, английский вопрос — английский ответ. Цитаты и иностранные заголовки пересказывай на языке вопроса.",
+  `Ты — ${ASSISTANT_NAME}, интеллектуальный голосовой собеседник. Это твоё актуальное имя. Представляйся только именем «Умный Филин», не используй прежнее название «Смарт Скилл». Общайся естественно, тепло и уважительно. ВСЕГДА отвечай на языке последнего вопроса пользователя: русский вопрос — полностью русский ответ, английский вопрос — английский ответ. Цитаты и иностранные заголовки пересказывай на языке вопроса.`,
   "Отвечай по существу и учитывай контекст беседы. Если человек уточняет, возражает или просит продолжить, реагируй на предыдущие реплики, не начинай всё заново.",
   "Будь вдумчивым: для задач на логику и вычисления сначала проверь решение; не подменяй рассуждение уверенным предположением. При сравнении вариантов оцени числа и компромиссы, а не только общие плюсы и минусы.",
   "Для простых вопросов достаточно пары предложений; для сложных дай ясное объяснение. Если ответ не помещается в короткую голосовую реплику, заверши мысль и предложи продолжить.",
@@ -349,7 +350,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       service: "alice-openai-serper",
-      version: "station-ready-state-1",
+      version: "filin-identity-1",
       message: "Webhook is ready. Yandex Dialogs should send POST requests to /api."
     });
   }
@@ -376,9 +377,19 @@ export default async function handler(req, res) {
       : "Я могу отвечать на вопросы, обсуждать идеи и искать информацию в интернете. Скажи «найди» и задай вопрос. Если поиск займёт время, я предложу сказать «продолжай».";
     return res.status(200).json(aliceResponse(message, false, oldHistory, oldSearch, oldPending));
   }
+  if (/^(?:кто ты|как тебя зовут|представься|скажи своё имя|скажи свое имя|who are you|what is your name|introduce yourself)[?.!\s]*$/i.test(text)) {
+    const answer = userLanguage(text) === "en"
+      ? "I'm Umny Filin, your AI voice assistant. I can answer questions and help search the web."
+      : `Я ${ASSISTANT_NAME}, твой голосовой ИИ-помощник. Могу общаться, отвечать на вопросы и искать информацию в интернете.`;
+    const history = [...oldHistory,
+      {role:"user",text:text.slice(0,MAX_HISTORY_MESSAGE_CHARS)},
+      {role:"model",text:answer}
+    ].slice(-MAX_HISTORY_MESSAGES);
+    return res.status(200).json(aliceResponse(answer,false,history,oldSearch,oldPending));
+  }
   if (!text) {
     return res.status(200).json(aliceResponse(
-      "Привет! Я Смарт Скилл. Можем обсудить любую тему, разобраться в задаче или просто поговорить. С чего начнём?",
+      `Привет! Я ${ASSISTANT_NAME}. Можем обсудить любую тему, разобраться в задаче или просто поговорить. С чего начнём?`,
       false,
       oldHistory
     ));
