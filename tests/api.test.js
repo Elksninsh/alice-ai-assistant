@@ -153,3 +153,23 @@ test("Yandex ping has a fast response with a valid envelope", async () => {
   assert.equal(payload.version,"1.0");
   assert.equal(payload.response.text,"ok");
 });
+
+test("new skill presents itself as Умный Филин at launch", async () => {
+  const handler = (await import("../api/index.js")).default;
+  let result;
+  await handler({method:"POST",body:{request:{command:""},state:{session:{history:[]}}}},{
+    status(){return this;}, json(value){result=value;return value;}, setHeader(){}
+  });
+  assert.match(result.response.text,/Я Умный Филин/);
+  assert.doesNotMatch(result.response.text,/Смарт Скилл/);
+});
+
+test("identity answer uses new name without calling OpenAI", async () => {
+  const handler = (await import("../api/index.js")).default;
+  let result;
+  await handler({method:"POST",body:{request:{command:"Как тебя зовут?"},state:{session:{history:[]}}}},{
+    status(){return this;}, json(value){result=value;return value;}, setHeader(){}
+  });
+  assert.match(result.response.text,/Я Умный Филин/);
+  assert.equal(result.session_state.history.length,2);
+});
