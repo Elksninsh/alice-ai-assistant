@@ -30,7 +30,7 @@ async function waitForDeployment() {
     try {
       const response=await fetch(api,{signal:AbortSignal.timeout(5000)});
       const data=await response.json();
-      if (response.ok && data.version==="station-ready-state-1") {
+      if (response.ok && data.version==="filin-identity-1") {
         console.log("Updated production webhook is available:",data.version);
         return;
       }
@@ -42,6 +42,10 @@ async function waitForDeployment() {
 }
 
 await waitForDeployment();
+console.log("CHECK 0: agent identity");
+const identity=await request("Как тебя зовут?");
+assert.match(identity.response.text,/Умный Филин/);
+assert.doesNotMatch(identity.response.text,/Смарт Скилл/);
 console.log("CHECK 1: ordinary conversation");
 const normal=await request("Сколько будет два плюс два?");
 assert.doesNotMatch(normal.response.text,/Не получилось|не удалось|повтори|попробуй/i,"Chat completion failure");
